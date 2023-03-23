@@ -5,7 +5,10 @@
 //! cargo run -p file-transfer
 //! ```
 //!
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
 
 use axum::{
     body::{self, Full},
@@ -14,10 +17,11 @@ use axum::{
         Path, State, WebSocketUpgrade,
     },
     http::{header, HeaderValue, Response, StatusCode},
-    response::{Html, IntoResponse},
+    response::IntoResponse,
     routing::get,
     Router,
 };
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::{SinkExt, StreamExt};
 use tokio::{
     fs::File,
@@ -35,7 +39,7 @@ async fn main() {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "file_transfer=trace".into()),
+                .unwrap_or_else(|_| "ruler=trace".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -49,7 +53,7 @@ async fn main() {
     let app = Router::new()
         .nest_service("/", ServeDir::new("../frontend/build/"))
         .route("/ws", get(websocket_handler))
-        .route("/upload/*path", get(upload_file))
+        .route("/queryfile/*path", get(query_file))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -71,46 +75,76 @@ async fn websocket_handler(
 async fn websocket(ws: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut reader) = ws.split();
 
+    let state_for_send = state.clone();
     let mut rx = state.tx.subscribe();
     let tx = state.tx.clone();
+
+    // send all msg
+    let mut bts = BytesMut::new();
+    bts.put_u8(61);
+    for msg in state.msg_arr.lock().unwrap().iter() {
+        bts.put_i32_le(4);
+        bts.put_i32_le(msg.id);
+
+        bts.put_i32_le(4);
+        bts.put_i32_le(msg.msg_type);
+
+        let text_byte_arr = msg.text.as_bytes();
+        bts.put_i32_le(text_byte_arr.len() as i32);
+        bts.put(text_byte_arr);
+    }
+    let _ = sender.send(Message::Binary(bts.to_vec())).await;
 
     let mut recv = tokio::spawn(async move {
         while let Some(Ok(data)) = reader.next().await {
             if let Message::Binary(data) = data {
-                if data.len() < 5 {
-                    error!("data len less than 5");
-                    break;
-                }
-                let mut idx = 0;
+                let mut bts = Bytes::from(data);
 
-                let _len = i32::from_le_bytes(data[idx..4].try_into().unwrap());
-                idx += 4;
-                let method_u8 = data[idx];
-                idx += 1;
+                let method_u8 = bts.get_u8();
+                debug!("method: {:?}", method_u8);
 
                 match method_u8 {
+                    // query all
                     1 => {
-                        let _ = tx.send(());
+                        // TOOD;
                     }
+                    // query single
                     2 => {
+                        let id = bts.get_i32_le();
+                        let _ = tx.send(QueryType::Single(id));
+                    }
+                    // client send msg
+                    3 => {
+                        let msg_len = bts.get_i32_le() as usize;
+                        let buf = bts.take(msg_len).into_inner().to_vec();
+                        let msg = String::from_utf8(buf).unwrap();
+                        let id = state.next_id();
+                        // debug!("id: {:?}, msg: {:?}", id, msg);
+                        state
+                            .msg_arr
+                            .lock()
+                            .unwrap()
+                            .push(Msg::new(id, MSG_T_TEXT, msg));
+                        let _ = tx.send(QueryType::Single(id));
+                    }
+                    // send file
+                    4 => {}
+                    5 => {
                         // 2: upload file, totallen-len-filename-len-filedata
-                        let name_len = i32::from_le_bytes(data[idx..idx + 4].try_into().unwrap());
-                        idx += 4;
+                        let name_len = bts.get_i32_le() as usize;
 
-                        let name = String::from_utf8(data[idx..(idx + name_len as usize)].to_vec())
-                            .unwrap();
-                        idx += name_len as usize;
+                        let name = String::from_utf8(bts.split_to(name_len).to_vec()).unwrap();
 
-                        let _data_len = i32::from_le_bytes(data[idx..idx + 4].try_into().unwrap());
-                        idx += 4;
+                        let data_len = bts.get_i32_le() as usize;
                         let path = std::path::Path::new(UPLOAD_DIR).join(name);
                         let mut file = BufWriter::new(File::create(path).await.unwrap());
-                        let mut data_reader = BufReader::new(&data[idx..]);
+                        let v = bts.take(data_len).into_inner().to_vec();
+                        let mut data_reader = BufReader::new(v.as_slice());
 
                         // Copy the body into the file.
                         tokio::io::copy(&mut data_reader, &mut file).await.unwrap();
 
-                        let _ = tx.send(());
+                        let _ = tx.send(QueryType::Single(0));
                     }
                     _ => {}
                 }
@@ -119,20 +153,35 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
     });
 
     let mut send = tokio::spawn(async move {
-        while let Ok(_) = rx.recv().await {
-            let mut files = tokio::fs::read_dir(UPLOAD_DIR).await.unwrap();
-            let mut resp = vec![];
+        while let Ok(query_type) = rx.recv().await {
+            match query_type {
+                QueryType::All => {}
+                QueryType::Single(id) => {
+                    let mut bts = BytesMut::new();
+                    bts.put_u8(62);
+                    if let Some(msg) = state_for_send
+                        .msg_arr
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|m| m.id == id)
+                    {
+                        debug!("single, id: {id}");
+                        bts.put_i32_le(4);
+                        bts.put_i32_le(msg.id);
 
-            while let Ok(Some(file)) = files.next_entry().await {
-                let name = file.file_name().into_string().unwrap();
-                let name_bytes = name.clone().into_bytes();
-                resp.extend(i32::to_le_bytes(name_bytes.len() as i32));
-                resp.extend(name_bytes);
+                        bts.put_i32_le(4);
+                        bts.put_i32_le(msg.msg_type);
+
+                        let text_byte_arr = msg.text.as_bytes();
+                        bts.put_i32_le(text_byte_arr.len() as i32);
+                        bts.put(text_byte_arr);
+                    }
+                    if !bts.is_empty() {
+                        let _ = sender.send(Message::Binary(bts.to_vec())).await;
+                    }
+                }
             }
-
-            let mut resp_data = i32::to_le_bytes(resp.len() as i32).to_vec();
-            resp_data.append(&mut resp);
-            let _ = sender.send(Message::Binary(resp_data)).await;
         }
     });
 
@@ -142,7 +191,7 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
     }
 }
 
-async fn upload_file(Path(path): Path<String>) -> impl IntoResponse {
+async fn query_file(Path(path): Path<String>) -> impl IntoResponse {
     let path = path.trim_start_matches('/');
     let mime_type = mime_guess::from_path(path).first_or_text_plain();
 
@@ -166,12 +215,46 @@ async fn upload_file(Path(path): Path<String>) -> impl IntoResponse {
 }
 
 struct AppState {
-    tx: broadcast::Sender<()>,
+    tx: broadcast::Sender<QueryType>,
+    id_gen: Mutex<i32>,
+    msg_arr: Mutex<Vec<Msg>>,
 }
 
 impl AppState {
     fn new() -> Self {
         let (tx, _) = broadcast::channel(128);
-        AppState { tx }
+        AppState {
+            tx,
+            id_gen: Mutex::new(0),
+            msg_arr: Mutex::new(vec![]),
+        }
     }
+
+    fn next_id(&self) -> i32 {
+        let result = *self.id_gen.lock().unwrap();
+        *self.id_gen.lock().unwrap() += 1;
+        result
+    }
+}
+
+type MsgType = i32;
+const MSG_T_TEXT: MsgType = 1;
+const MSG_T_FILE: MsgType = 2;
+
+struct Msg {
+    id: i32,
+    msg_type: MsgType,
+    text: String,
+}
+
+impl Msg {
+    fn new(id: i32, msg_type: MsgType, text: String) -> Self {
+        Self { id, msg_type, text }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum QueryType {
+    All,
+    Single(i32),
 }

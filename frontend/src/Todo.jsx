@@ -1,39 +1,60 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
+import { useDispatch, useSelector } from 'react-redux';
 
-const Todo = () => {
+const Msg = () => {
+  let msg_arr = [...useSelector(state => state.ruler.msg_arr)];
+
+  // let msg_arr_rev = msg_arr.reverse();
+
+  let msg_list = msg_arr.map(msg => {
+    return <MsgItem key={msg.id} msg={msg} />
+  });
+  let [input, setInput] = useState("");
+
+  const dispatch = useDispatch();
   let handleSubmit = (event) => {
     event.preventDefault();
-    alert('A name was submitted: ');
+    dispatch({ type: "ws/sendMsg", payload: { data: input } });
+    setInput("");
   }
 
-  let [input, setInput] = useState("");
+  // scroll to bottom
+  const messagesEndRef = useRef(null)
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+  useEffect(() => {
+    setTimeout(scrollToBottom, 50);
+
+  }, [msg_arr]);
+
   return (
     <div className="flex flex-col absolute inset-0 bg-gray-600">
       <div className="bg-gray-800">
-        <h1 className="text-gray-100 font-bold text-2xl pl-4 py-4">Todo</h1>
+        <h1 className="text-gray-100 font-bold text-2xl pl-4 py-4">笔</h1>
       </div>
-      <div className="flex-1 p-4">
+      <div className="flex-1 p-4 overflow-y-auto scroll-smooth scroll-auto">
         <div className="flex flex-col gap-4">
-          <TodoItem />
-          <TodoItem />
-          <TodoItem />
+          {msg_list}
+          <div ref={messagesEndRef} />
         </div>
       </div>
       <div className="p-2">
-        <from className="flex gap-2" onSubmit={handleSubmit}>
+        <form className="flex gap-2" onSubmit={handleSubmit}>
           <button
-            class="flex items-center justify-center text-gray-200 hover:text-gray-300">
+            className="flex items-center justify-center text-gray-200 hover:text-gray-300">
             <svg
-              class="w-5 h-5"
+              className="w-5 h-5"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
               xmlns="http://www.w3.org/2000/svg"
             >
               <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
                 d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
               ></path>
             </svg>
@@ -46,20 +67,20 @@ const Todo = () => {
             onChange={e => setInput(e.target.value)}
             className="w-full rounded-md outline-0 p-2" />
           <button className="p-2 bg-green-600 rounded-md text-gray-50">Send</button>
-        </from>
+        </form>
       </div>
     </div>
   )
 }
 
-const TodoItem = () => {
+const MsgItem = ({ msg }) => {
   return (
     <div className="flex justify-end">
       <div className="bg-blue-500 text-white rounded-md py-2 px-4 max-w-xs">
-        Hello! How can I help you today?
+        {msg.text}
       </div>
     </div>
   );
 }
 
-export default Todo
+export default Msg

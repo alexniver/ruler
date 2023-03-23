@@ -1,10 +1,10 @@
 import { configureStore, getDefaultMiddleware } from '@reduxjs/toolkit'
-import todoReducer from './todoSlice'
+import rulerReducer from './rulerSlice'
 import { wsMiddleware } from './wsMiddleware'
 
 export default configureStore({
   reducer: {
-    todo: todoReducer,
+    ruler: rulerReducer,
   },
   middleware: [wsMiddleware, ...getDefaultMiddleware()],
 })

@@ -6,7 +6,7 @@ function App() {
   const dispatch = useDispatch();
 
   useEffect(() => {
-    dispatch({ type: "ws/connect", payload: { url: "ws://192.168.0.105:3001/ws" } });
+    dispatch({ type: "ws/connect", payload: { url: "ws://192.168.0.105:3000/ws" } });
 
     return () => {
       dispatch({ type: "ws/disconnect", payload: {} });
