@@ -15,13 +15,10 @@ export const wsMiddleware = store => {
         ws.binaryType = "arraybuffer";
 
         ws.onopen = () => {
-          console.log("open");
-          // storeAPI.dispatch({ type: 'ws/connect' });
-          queryMsgArr(ws);
+          console.log("websocket open");
         };
         ws.onclose = () => {
-          console.log("close");
-          // storeAPI.dispatch({ type: 'ws/close' });
+          console.log("websocket close");
         };
         ws.onmessage = event => {
           process_msg(store, event.data);
@@ -49,8 +46,34 @@ export const wsMiddleware = store => {
         ws.send(sendData);
         break;
       case 'ws/sendFile':
-        let filename = action.payload.data;
-        console.log("send:" + filename);
+        let file = action.payload.data;
+        const reader = new FileReader();
+
+        reader.onload = function(e) {
+          let file_data = e.target.result;
+          const file_data_len_arr = intToArray(file_data.byteLength);
+          const method_arr = new Uint8Array(1);
+          method_arr[0] = 4;
+
+          const file_name_arr = encoder.encode(file.name);
+          const file_name_len_arr = intToArray(file_name_arr.length);
+
+          let sendData = new Uint8Array(1 + 4 + file_name_arr.length + 4 + file_data.byteLength);
+
+          let idx = 0;
+          sendData.set(new Uint8Array(method_arr), idx);
+          idx += 1;
+          sendData.set(new Uint8Array(file_name_len_arr), idx);
+          idx += 4;
+          sendData.set(new Uint8Array(file_name_arr), idx);
+          idx += file_name_arr.length;
+          sendData.set(new Uint8Array(file_data_len_arr), idx);
+          idx += 4;
+          sendData.set(new Uint8Array(file_data), idx);
+          ws.send(sendData);
+        }
+
+        reader.readAsArrayBuffer(file); // _must_ use ArrayBuffer
         break;
 
       case 'ws/disconnect':
@@ -65,13 +88,7 @@ export const wsMiddleware = store => {
   };
 };
 
-// query msg arr, method: 1
-function queryMsgArr(ws) {
-  const method_arr = new Uint8Array(1);
-  method_arr[0] = 1;
 
-  ws.send(method_arr);
-}
 
 function process_msg(store, data) {
   let data_view = new DataView(data);

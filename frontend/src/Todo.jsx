@@ -4,10 +4,11 @@ import { useDispatch, useSelector } from 'react-redux';
 const Msg = () => {
   let msg_arr = [...useSelector(state => state.ruler.msg_arr)];
 
-  // let msg_arr_rev = msg_arr.reverse();
-
   let msg_list = msg_arr.map(msg => {
-    return <MsgItem key={msg.id} msg={msg} />
+    if (msg.msg_type == 1) {
+      return <MsgTextItem key={msg.id} msg={msg} />
+    }
+    return <MsgFileItem key={msg.id} msg={msg} />
   });
   let [input, setInput] = useState("");
 
@@ -29,6 +30,19 @@ const Msg = () => {
 
   }, [msg_arr]);
 
+  // file upload
+  const hiddenFileInput = React.useRef(null);
+
+  const handleFileClick = event => {
+    event.preventDefault();
+    hiddenFileInput.current.click();
+  };
+
+  const handleFileChange = event => {
+    const file = event.target.files[0];
+    dispatch({ type: "ws/sendFile", payload: { data: file } });
+  };
+
   return (
     <div className="flex flex-col absolute inset-0 bg-gray-600">
       <div className="bg-gray-800">
@@ -43,7 +57,9 @@ const Msg = () => {
       <div className="p-2">
         <form className="flex gap-2" onSubmit={handleSubmit}>
           <button
-            className="flex items-center justify-center text-gray-200 hover:text-gray-300">
+            className="flex items-center justify-center text-gray-200 hover:text-gray-300"
+            onClick={handleFileClick}
+          >
             <svg
               className="w-5 h-5"
               fill="none"
@@ -59,6 +75,12 @@ const Msg = () => {
               ></path>
             </svg>
           </button>
+          <input
+            type="file"
+            ref={hiddenFileInput}
+            onChange={handleFileChange}
+            className="hidden"
+          />
 
           <input
             type="text"
@@ -73,7 +95,7 @@ const Msg = () => {
   )
 }
 
-const MsgItem = ({ msg }) => {
+const MsgTextItem = ({ msg }) => {
   return (
     <div className="flex justify-end">
       <div className="bg-blue-500 text-white rounded-md py-2 px-4 max-w-xs">
@@ -82,5 +104,16 @@ const MsgItem = ({ msg }) => {
     </div>
   );
 }
+
+const MsgFileItem = ({ msg }) => {
+  return (
+    <div className="flex justify-end">
+      <div className="bg-blue-500 text-white rounded-md py-2 px-4 max-w-xs">
+        <a href={window.location.href + "queryfile/" + msg.text} download>{msg.text}</a>
+      </div>
+    </div>
+  );
+}
+
 
 export default Msg
