@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDispatch } from "react-redux";
-import Todo from "./Todo";
+import Msg from "./Todo";
 
 function App() {
   const dispatch = useDispatch();
@@ -15,7 +15,7 @@ function App() {
 
   return (
     <div>
-      <Todo />
+      <Msg />
     </div>
   );
 }

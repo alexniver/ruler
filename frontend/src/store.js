@@ -1,5 +1,5 @@
 import { configureStore, getDefaultMiddleware } from '@reduxjs/toolkit'
-import rulerReducer from './rulerSlice'
+import rulerReducer from './rulerReducer'
 import { wsMiddleware } from './wsMiddleware'
 
 export default configureStore({

@@ -95,12 +95,14 @@ function process_msg(store, data) {
   let method = data_view.getInt8(0, true);
 
   let i = 1;
-  if (method == 61) { // msg list
+  if (method === 61) { // msg list
     while (i < data_view.byteLength) {
       i = deal_msg(store, data_view, i);
     }
-  } else if (method == 62) { // one msg
+  } else if (method === 62) { // one msg
     deal_msg(store, data_view, i);
+  } else if (method === 63) { // delete msg
+    delete_msg(store, data_view);
   }
 }
 
@@ -108,6 +110,15 @@ function deal_msg(store, data_view, i) {
   let [msg, new_i] = parse_msg_data(data_view, i);
   store.dispatch({ type: "ruler/addMsg", payload: { data: msg } });
   return new_i;
+}
+
+function delete_msg(store, data_view) {
+  let i = 1;
+  let id_len = data_view.getInt32(i, true);
+
+  i += 4;
+  let id = data_view.getInt32(i, true);
+  store.dispatch({ type: "ruler/deleteMsg", payload: { data: id } });
 }
 
 function parse_msg_data(data_view, i) {

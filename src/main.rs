@@ -8,6 +8,7 @@
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -34,6 +35,15 @@ use tracing_subscriber::{prelude::__tracing_subscriber_SubscriberExt, util::Subs
 
 const UPLOAD_DIR: &str = "upload";
 
+const CLIENT_M_ALL_MSG: u8 = 1;
+const CLIENT_M_SINGLE_MSG: u8 = 2;
+const CLIENT_M_SEND_MSG: u8 = 3;
+const CLIENT_SEND_FILE: u8 = 4;
+
+const SERVER_M_ALL_MSG: u8 = 61;
+const SERVER_M_CREATE_MSG: u8 = 62;
+const SERVER_M_DELETE_MSG: u8 = 63;
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
@@ -44,6 +54,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    let _ = tokio::fs::remove_dir_all(UPLOAD_DIR).await; // clear all data
     let _ = tokio::fs::create_dir_all(UPLOAD_DIR).await;
 
     let state = Arc::new(AppState::new());
@@ -76,12 +87,14 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
     let (mut sender, mut reader) = ws.split();
 
     let state_for_send = state.clone();
+    let state_for_delete = state.clone();
     let mut rx = state.tx.subscribe();
-    let tx = state.tx.clone();
+    let tx_for_create = state.tx.clone();
+    let tx_for_delete = state.tx.clone();
 
     // send all msg
     let mut bts = BytesMut::new();
-    bts.put_u8(61);
+    bts.put_u8(SERVER_M_ALL_MSG);
     for msg in state.msg_arr.lock().unwrap().iter() {
         bts.put_i32_le(4);
         bts.put_i32_le(msg.id);
@@ -101,20 +114,23 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
                 let mut bts = Bytes::from(data);
 
                 let method_u8 = bts.get_u8();
-                debug!("method: {:?}", method_u8);
+                // debug!("method: {:?}", method_u8);
 
                 match method_u8 {
                     // query all
-                    1 => {
+                    CLIENT_M_ALL_MSG => {
                         // TOOD;
                     }
                     // query single
-                    2 => {
+                    CLIENT_M_SINGLE_MSG => {
                         let id = bts.get_i32_le();
-                        let _ = tx.send(id);
+                        let _ = tx_for_create.send(Crud::Create(id));
                     }
                     // client send msg
-                    3 => {
+                    CLIENT_M_SEND_MSG => {
+                        if state.msg_arr.lock().unwrap().len() > 20 {
+                            continue;
+                        }
                         let msg_len = bts.get_i32_le() as usize;
                         let buf = bts.take(msg_len).into_inner().to_vec();
                         let msg = String::from_utf8(buf).unwrap();
@@ -125,16 +141,23 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
                             .lock()
                             .unwrap()
                             .push(Msg::new(id, MSG_T_TEXT, msg));
-                        let _ = tx.send(id);
+                        let _ = tx_for_create.send(Crud::Create(id));
                     }
                     // client send file
-                    4 => {
+                    CLIENT_SEND_FILE => {
+                        if state.msg_arr.lock().unwrap().len() > 20 {
+                            continue;
+                        }
                         // 2: upload file, totallen-len-filename-len-filedata
                         let name_len = bts.get_i32_le() as usize;
 
                         let name = String::from_utf8(bts.split_to(name_len).to_vec()).unwrap();
 
                         let data_len = bts.get_i32_le() as usize;
+                        debug!("len: {:?}", data_len);
+                        if data_len > 50 * 1024 * 1024 {
+                            continue;
+                        }
                         let path = std::path::Path::new(UPLOAD_DIR).join(&name);
                         let mut file = BufWriter::new(File::create(path).await.unwrap());
                         let v = bts.take(data_len).into_inner().to_vec();
@@ -150,7 +173,7 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
                             .lock()
                             .unwrap()
                             .push(Msg::new(id, MSG_T_FILE, name));
-                        let _ = tx.send(id);
+                        let _ = tx_for_create.send(Crud::Create(id));
                     }
                     _ => {}
                 }
@@ -160,35 +183,95 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
 
     let mut send = tokio::spawn(async move {
         while let Ok(id) = rx.recv().await {
-            let mut bts = BytesMut::new();
-            bts.put_u8(62);
-            if let Some(msg) = state_for_send
-                .msg_arr
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|m| m.id == id)
-            {
-                debug!("single, id: {id}");
-                bts.put_i32_le(4);
-                bts.put_i32_le(msg.id);
+            match id {
+                Crud::Create(id) => {
+                    let mut bts = BytesMut::new();
+                    bts.put_u8(SERVER_M_CREATE_MSG);
+                    if let Some(msg) = state_for_send
+                        .msg_arr
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|m| m.id == id)
+                    {
+                        // debug!("single, id: {id}");
+                        bts.put_i32_le(4);
+                        bts.put_i32_le(msg.id);
 
-                bts.put_i32_le(4);
-                bts.put_i32_le(msg.msg_type);
+                        bts.put_i32_le(4);
+                        bts.put_i32_le(msg.msg_type);
 
-                let text_byte_arr = msg.text.as_bytes();
-                bts.put_i32_le(text_byte_arr.len() as i32);
-                bts.put(text_byte_arr);
+                        let text_byte_arr = msg.text.as_bytes();
+                        bts.put_i32_le(text_byte_arr.len() as i32);
+                        bts.put(text_byte_arr);
+                    }
+                    if !bts.is_empty() {
+                        let _ = sender.send(Message::Binary(bts.to_vec())).await;
+                    }
+                }
+                Crud::Delete(id) => {
+                    let mut bts = BytesMut::new();
+                    bts.put_u8(SERVER_M_DELETE_MSG);
+                    bts.put_i32_le(4);
+                    bts.put_i32_le(id);
+                    debug!("delete: {:?}", id);
+                    let _ = sender.send(Message::Binary(bts.to_vec())).await;
+                }
             }
-            if !bts.is_empty() {
-                let _ = sender.send(Message::Binary(bts.to_vec())).await;
+        }
+    });
+
+    // delete timout msg task
+    let mut auto_delete_msg = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(1000)).await;
+
+            let mut id_to_remove = vec![];
+            for msg in state_for_delete.msg_arr.lock().unwrap().iter() {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("time error")
+                    .as_millis();
+                if now - msg.create_time > 1000 * 60 {
+                    id_to_remove.push(msg.id);
+                    let _ = tx_for_delete.send(Crud::Delete(msg.id));
+                }
+            }
+
+            for id in id_to_remove {
+                let mut path = None;
+
+                {
+                    let mut msg_arr = state_for_delete.msg_arr.lock().unwrap();
+                    let pos = msg_arr.iter().position(|msg| msg.id == id);
+                    if let Some(pos) = pos {
+                        let msg = msg_arr.remove(pos);
+                        if msg.msg_type == MSG_T_FILE {
+                            path = Some(std::path::Path::new(UPLOAD_DIR).join(&msg.text));
+                        }
+                    }
+                }
+
+                if let Some(path) = path {
+                    let _ = tokio::fs::remove_file(path).await;
+                }
             }
         }
     });
 
     tokio::select! {
-        _ = (&mut recv) => send.abort(),
-        _ = (&mut send) => recv.abort(),
+        _ = (&mut recv) => {
+            send.abort();
+            auto_delete_msg.abort();
+        },
+        _ = (&mut send) => {
+            recv.abort();
+            auto_delete_msg.abort();
+        },
+        _ = (&mut auto_delete_msg) => {
+            send.abort();
+            recv.abort();
+        },
     }
 }
 
@@ -216,7 +299,7 @@ async fn query_file(Path(path): Path<String>) -> impl IntoResponse {
 }
 
 struct AppState {
-    tx: broadcast::Sender<i32>,
+    tx: broadcast::Sender<Crud>,
     id_gen: Mutex<i32>,
     msg_arr: Mutex<Vec<Msg>>,
 }
@@ -246,10 +329,25 @@ struct Msg {
     id: i32,
     msg_type: MsgType,
     text: String,
+    create_time: u128,
 }
 
 impl Msg {
     fn new(id: i32, msg_type: MsgType, text: String) -> Self {
-        Self { id, msg_type, text }
+        Self {
+            id,
+            msg_type,
+            text,
+            create_time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("error time")
+                .as_millis(),
+        }
     }
+}
+
+#[derive(Clone, Copy)]
+enum Crud {
+    Create(i32),
+    Delete(i32),
 }

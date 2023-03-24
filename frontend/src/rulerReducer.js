@@ -10,7 +10,7 @@ export const rulerSlice = createSlice({
       state.msg_arr.push(action.payload.data);
     },
     deleteMsg: (state, action) => {
-      state.msg_arr = state.msg_arr.filter(msg => msg.id == action.payload.id);
+      state.msg_arr = state.msg_arr.filter(msg => msg.id !== action.payload.data);
     },
   }
 })
