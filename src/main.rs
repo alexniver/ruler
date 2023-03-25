@@ -23,6 +23,7 @@ use axum::{
     Router,
 };
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use clap::{arg, command, Parser};
 use futures::{SinkExt, StreamExt};
 use tokio::{
     fs::File,
@@ -44,6 +45,15 @@ const SERVER_M_ALL_MSG: u8 = 61;
 const SERVER_M_CREATE_MSG: u8 = 62;
 const SERVER_M_DELETE_MSG: u8 = 63;
 
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Number of times to greet
+    #[arg(short, long, default_value_t = 3000)]
+    port: u16,
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
@@ -53,6 +63,8 @@ async fn main() {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+
+    let args = Args::parse();
 
     let _ = tokio::fs::remove_dir_all(UPLOAD_DIR).await; // clear all data
     let _ = tokio::fs::create_dir_all(UPLOAD_DIR).await;
@@ -67,7 +79,7 @@ async fn main() {
         .route("/queryfile/*path", get(query_file))
         .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], args.port));
     debug!("listening on {:?}", &addr);
 
     axum::Server::bind(&addr)
