@@ -154,7 +154,6 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
                         let name = String::from_utf8(bts.split_to(name_len).to_vec()).unwrap();
 
                         let data_len = bts.get_i32_le() as usize;
-                        debug!("len: {:?}", data_len);
                         if data_len > 50 * 1024 * 1024 {
                             continue;
                         }
@@ -214,7 +213,6 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
                     bts.put_u8(SERVER_M_DELETE_MSG);
                     bts.put_i32_le(4);
                     bts.put_i32_le(id);
-                    debug!("delete: {:?}", id);
                     let _ = sender.send(Message::Binary(bts.to_vec())).await;
                 }
             }
