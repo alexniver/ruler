@@ -45,6 +45,8 @@ const SERVER_M_ALL_MSG: u8 = 61;
 const SERVER_M_CREATE_MSG: u8 = 62;
 const SERVER_M_DELETE_MSG: u8 = 63;
 
+const MAX_FILE_SIZE_IN_MB: usize = 1024;
+
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -89,9 +91,10 @@ async fn main() {
 }
 
 async fn websocket_handler(
-    wsu: WebSocketUpgrade,
+    mut wsu: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
+    wsu = wsu.max_message_size(MAX_FILE_SIZE_IN_MB * 1024 * 1024 + 1024);
     wsu.on_upgrade(|ws| websocket(ws, state))
 }
 
@@ -126,7 +129,7 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
                 let mut bts = Bytes::from(data);
 
                 let method_u8 = bts.get_u8();
-                // debug!("method: {:?}", method_u8);
+                //debug!("method: {:?}", method_u8);
 
                 match method_u8 {
                     // query all
@@ -166,7 +169,7 @@ async fn websocket(ws: WebSocket, state: Arc<AppState>) {
                         let name = String::from_utf8(bts.split_to(name_len).to_vec()).unwrap();
 
                         let data_len = bts.get_i32_le() as usize;
-                        if data_len > 50 * 1024 * 1024 {
+                        if data_len > MAX_FILE_SIZE_IN_MB * 1024 * 1024 {
                             continue;
                         }
                         let path = std::path::Path::new(UPLOAD_DIR).join(&name);
